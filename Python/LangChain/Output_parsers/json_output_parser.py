@@ -15,7 +15,7 @@ model=ChatHuggingFace(llm=llm)
 parser=JsonOutputParser()
 
 template=PromptTemplate(
-    template='give me 5 facts about {topic} /n {format_instruction}',
+    template='give me 5 facts about {topic} \n {format_instruction}',
     input_variales=[],
     partial_variables={'format_instruction':parser.get_format_instructions()}
 )
