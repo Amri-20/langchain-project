@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 llm=HuggingFaceEndpoint(
-    repo_id="openai/gpt-oss-120b",
+    repo_id="nvidia/Nemotron-Labs-Diffusion-14B",
     task="text-generation"
 )
 
