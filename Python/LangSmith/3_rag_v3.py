@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from langsmith import traceable
 
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings, ChatHuggingFace, HuggingFaceEndpoint
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
@@ -32,7 +32,7 @@ def split_documents(docs, chunk_size=1000, chunk_overlap=150):
 
 @traceable(name="build_vectorstore")
 def build_vectorstore(splits):
-    emb = OpenAIEmbeddings(model="text-embedding-3-small")
+    emb = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
     return FAISS.from_documents(splits, emb)
 
 # ----------------- parent setup function (traced) -----------------
@@ -45,7 +45,12 @@ def setup_pipeline(pdf_path: str, chunk_size=1000, chunk_overlap=150):
     return vs
 
 # ----------------- model, prompt, and run -----------------
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = HuggingFaceEndpoint(
+    repo_id="openai/gpt-oss-20b",
+    task="text-generation"
+)
+
+model = ChatHuggingFace(llm=llm)
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", "Answer ONLY from the provided context. If not found, say you don't know."),
@@ -68,7 +73,7 @@ def setup_pipeline_and_query(pdf_path: str, question: str):
         "question": RunnablePassthrough(),
     })
 
-    chain = parallel | prompt | llm | StrOutputParser()
+    chain = parallel | prompt | model | StrOutputParser()
 
     # This LangChain run stays under the same root (since we're inside this traced function)
     lc_config = {"run_name": "pdf_rag_query"}

@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 from langsmith import traceable
 
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings, ChatHuggingFace, HuggingFaceEndpoint
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
@@ -36,7 +36,7 @@ def split_documents(docs, chunk_size=1000, chunk_overlap=150):
 
 @traceable(name="build_vectorstore")
 def build_vectorstore(splits, embed_model_name: str):
-    emb = OpenAIEmbeddings(model=embed_model_name)
+    emb = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
     return FAISS.from_documents(splits, emb)
 
 # ----------------- cache key / fingerprint -----------------
@@ -61,7 +61,7 @@ def _index_key(pdf_path: str, chunk_size: int, chunk_overlap: int, embed_model_n
 # ----------------- explicitly traced load/build runs -----------------
 @traceable(name="load_index", tags=["index"])
 def load_index_run(index_dir: Path, embed_model_name: str):
-    emb = OpenAIEmbeddings(model=embed_model_name)
+    emb = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
     return FAISS.load_local(
         str(index_dir),
         emb,
@@ -100,7 +100,12 @@ def load_or_build_index(
         return build_index_run(pdf_path, index_dir, chunk_size, chunk_overlap, embed_model_name)
 
 # ----------------- model, prompt, and pipeline -----------------
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = HuggingFaceEndpoint(
+    repo_id="openai/gpt-oss-20b",
+    task="text-generation"
+)
+
+model = ChatHuggingFace(llm=llm)
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", "Answer ONLY from the provided context. If not found, say you don't know."),
@@ -136,7 +141,7 @@ def setup_pipeline_and_query(
         "context": retriever | RunnableLambda(format_docs),
         "question": RunnablePassthrough(),
     })
-    chain = parallel | prompt | llm | StrOutputParser()
+    chain = parallel | prompt | model | StrOutputParser()
 
     return chain.invoke(
         question,

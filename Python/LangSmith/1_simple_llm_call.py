@@ -19,7 +19,7 @@ parser = StrOutputParser()
 chain = prompt | model | parser
 
 result = chain.invoke({
-    "question": "What is the capital of Peru?"
+    "question": "What is the capital of France?"
 })
 
 print(result)

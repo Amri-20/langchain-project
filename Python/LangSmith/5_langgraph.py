@@ -5,21 +5,31 @@ from typing import TypedDict, Annotated, List
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-
+from langchain_core.output_parsers import JsonOutputParser
 from langsmith import traceable
-from langchain_openai import ChatOpenAI
+from langchain_huggingface import HuggingFaceEmbeddings, ChatHuggingFace, HuggingFaceEndpoint
 from langgraph.graph import StateGraph, START, END
+import os
+
+os.environ['LANGCHAIN_PROJECT']="UPSC 3"
 
 # ---------- Setup ----------
 load_dotenv()
-model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = HuggingFaceEndpoint(
+    repo_id="openai/gpt-oss-120b",
+    task="text-generation"
+)
+
+model = ChatHuggingFace(llm=llm)
 
 # ---------- Structured schema & model ----------
 class EvaluationSchema(BaseModel):
     feedback: str = Field(description="Detailed feedback for the essay")
     score: int = Field(description="Score out of 10", ge=0, le=10)
 
-structured_model = model.with_structured_output(EvaluationSchema)
+parser = JsonOutputParser(
+    pydantic_object=EvaluationSchema
+)
 
 # ---------- Sample essay ----------
 essay2 = """India and AI Time
@@ -58,7 +68,8 @@ def evaluate_language(state: UPSCState):
         "Evaluate the language quality of the following essay and provide feedback "
         "and assign a score out of 10.\n\n" + state["essay"]
     )
-    out = structured_model.invoke(prompt)
+    res = model.invoke(prompt)
+    out=result = parser.parse(res.content)
     return {"language_feedback": out.feedback, "individual_scores": [out.score]}
 
 @traceable(name="evaluate_analysis_fn", tags=["dimension:analysis"], metadata={"dimension": "analysis"})
@@ -67,7 +78,8 @@ def evaluate_analysis(state: UPSCState):
         "Evaluate the depth of analysis of the following essay and provide feedback "
         "and assign a score out of 10.\n\n" + state["essay"]
     )
-    out = structured_model.invoke(prompt)
+    res = model.invoke(prompt)
+    out=result = parser.parse(res.content)
     return {"analysis_feedback": out.feedback, "individual_scores": [out.score]}
 
 @traceable(name="evaluate_thought_fn", tags=["dimension:clarity"], metadata={"dimension": "clarity_of_thought"})
@@ -76,7 +88,8 @@ def evaluate_thought(state: UPSCState):
         "Evaluate the clarity of thought of the following essay and provide feedback "
         "and assign a score out of 10.\n\n" + state["essay"]
     )
-    out = structured_model.invoke(prompt)
+    res = model.invoke(prompt)
+    out=result = parser.parse(res.content)
     return {"clarity_feedback": out.feedback, "individual_scores": [out.score]}
 
 @traceable(name="final_evaluation_fn", tags=["aggregate"])

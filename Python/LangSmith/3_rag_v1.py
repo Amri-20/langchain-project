@@ -3,12 +3,15 @@
 import os
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings, ChatHuggingFace, HuggingFaceEndpoint
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
+
+os.environ['LANGCHAIN_PROJECT']="RAG Workflow"
 
 load_dotenv()  # expects OPENAI_API_KEY in .env
 
@@ -23,7 +26,7 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
 splits = splitter.split_documents(docs)
 
 # 3) Embed + index
-emb = OpenAIEmbeddings(model="text-embedding-3-small")
+emb = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
 vs = FAISS.from_documents(splits, emb)
 retriever = vs.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
@@ -34,7 +37,13 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
 # 5) Chain
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = HuggingFaceEndpoint(
+    repo_id="openai/gpt-oss-20b",
+    task="text-generation"
+)
+
+model = ChatHuggingFace(llm=llm)
+
 def format_docs(docs): return "\n\n".join(d.page_content for d in docs)
 
 parallel = RunnableParallel({
@@ -42,7 +51,7 @@ parallel = RunnableParallel({
     "question": RunnablePassthrough()
 })
 
-chain = parallel | prompt | llm | StrOutputParser()
+chain = parallel | prompt | model | StrOutputParser()
 
 # 6) Ask questions
 print("PDF RAG ready. Ask a question (or Ctrl+C to exit).")
