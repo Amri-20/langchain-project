@@ -6,3 +6,9 @@ model = ChatGoogleGenerativeAI(
 )
 
 print(model.invoke("What is your name"))
+
+content = "   Hello, World! \n"
+clean_content = content.strip()
+
+print(repr(clean_content)) 
+# Output: 'Hello, World!'
