@@ -12,7 +12,9 @@ from pydantic import BaseModel,Field
 from langgraph.graph import StateGraph,START,END
 from langgraph.types import Send
 
-from langchain_huggingface import ChatHuggingFace,HuggingFaceEndpoint
+# from langchain_huggingface import ChatHuggingFace,HuggingFaceEndpoint
+
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage,HumanMessage
 from langchain_core.prompt_values import ChatPromptValue
 from langchain_core.output_parsers import PydanticOutputParser
@@ -149,17 +151,70 @@ class State(TypedDict):
     result: str
 
 
-# Yeh setup top par rakho
-llm = HuggingFaceEndpoint(
-    repo_id="meta-llama/Meta-Llama-3-8B-Instruct",  # Model change karna zaruri hai
-    task="text-generation",
-    max_new_tokens=2500,
-    temperature=0.1
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+model = ChatOpenAI(
+    model="nvidia/nemotron-3-super-120b-a12b:free",
+    api_key=OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1",
+    temperature=0.1,
+    max_tokens=400,
 )
 
-model = ChatHuggingFace(llm=llm)
-parser = PydanticOutputParser(pydantic_object=Plan)
-retry_parser = RetryWithErrorOutputParser.from_llm(parser=parser, llm=model)
+
+# # Yeh setup top par rakho
+# llm = HuggingFaceEndpoint(
+#     repo_id="openai/gpt-oss-20b",  # Model change karna zaruri hai
+#     task="conversational",
+#     max_new_tokens=400,
+#     temperature=0.1,
+#     timeout=600,
+# )
+parser = PydanticOutputParser(
+    pydantic_object=Plan
+)
+
+retry_parser = RetryWithErrorOutputParser.from_llm(
+    parser=parser,
+    llm=model
+)
+
+# response = model.invoke("Say hello")
+
+# print(response.content)
+
+
+import time
+import httpx
+
+def safe_invoke(messages, retries=3):
+    for attempt in range(retries):
+        try:
+            return model.invoke(messages)
+
+        except (httpx.ReadTimeout,
+                httpx.ConnectTimeout,
+                httpx.TimeoutException):
+
+            if attempt == retries - 1:
+                raise
+
+            print(f"Timeout. Retrying {attempt+1}/{retries}")
+            time.sleep(5)
+
+# def safe_invoke(messages, retries=3):
+#     for attempt in range(retries):
+#         try:
+#             return model.invoke(messages)
+
+#         except httpx.ReadTimeout:
+#             if attempt == retries - 1:
+#                 raise
+
+#             print(f"Timeout. Retrying {attempt + 1}/{retries}")
+#             time.sleep(5)
+
+
 # -----------------------------
 # 3) Router (decide upfront)
 # -----------------------------
@@ -227,7 +282,7 @@ Example:
         ]
     )
 
-    response = model.invoke(prompt_value)
+    response = safe_invoke(prompt_value)
 
     raw = (
         response.content
@@ -415,6 +470,7 @@ plan_retry_parser = RetryWithErrorOutputParser.from_llm(
 def orchestrator_node(state: State) -> dict:
     import json
     import re
+    from langchain_core.prompt_values import ChatPromptValue
 
     evidence = state.get("evidence", [])
     mode = state.get("mode", "closed_book")
@@ -455,7 +511,7 @@ Those are routing modes, not blog kinds.
         ),
     ]
 
-    response = model.invoke(messages)
+    response = safe_invoke(messages)
 
     raw = (
         response.content
@@ -512,9 +568,13 @@ Those are routing modes, not blog kinds.
 
         except Exception:
 
+            prompt_value = ChatPromptValue(
+                messages=messages
+            )
+
             plan = plan_retry_parser.parse_with_prompt(
                 raw,
-                messages
+                prompt_value
             )
 
     print("\n===== PLAN CREATED =====")
@@ -526,6 +586,121 @@ Those are routing modes, not blog kinds.
     return {
         "plan": plan
     }
+
+# def orchestrator_node(state: State) -> dict:
+#     import json
+#     import re
+
+#     evidence = state.get("evidence", [])
+#     mode = state.get("mode", "closed_book")
+
+#     messages = [
+#         SystemMessage(
+#             content=(
+#                 ORCH_SYSTEM
+#                 + """
+
+# IMPORTANT:
+
+# blog_kind MUST be one of:
+# - explainer
+# - tutorial
+# - news_roundup
+# - comparison
+# - system_design
+
+# NEVER use:
+# - open_book
+# - closed_book
+# - hybrid
+
+# Those are routing modes, not blog kinds.
+# """
+#                 + "\n\n"
+#                 + plan_parser.get_format_instructions()
+#             )
+#         ),
+#         HumanMessage(
+#             content=(
+#                 f"Topic: {state['topic']}\n"
+#                 f"Mode: {mode}\n\n"
+#                 f"Evidence:\n"
+#                 f"{[e.model_dump() for e in evidence][:16]}"
+#             )
+#         ),
+#     ]
+
+#     response = safe_invoke(messages)
+
+#     raw = (
+#         response.content
+#         if hasattr(response, "content")
+#         else str(response)
+#     ).strip()
+
+#     print("\n===== ORCHESTRATOR RAW =====")
+#     print(raw)
+#     print("============================\n")
+
+#     try:
+#         plan = plan_parser.parse(raw)
+
+#     except Exception:
+
+#         try:
+#             match = re.search(
+#                 r"\{.*\}",
+#                 raw,
+#                 re.DOTALL
+#             )
+
+#             if not match:
+#                 raise ValueError(
+#                     f"Could not find JSON in orchestrator output:\n{raw}"
+#                 )
+
+#             data = json.loads(match.group(0))
+
+#             blog_kind = data.get("blog_kind")
+
+#             if blog_kind == "open_book":
+#                 data["blog_kind"] = "news_roundup"
+
+#             elif blog_kind == "closed_book":
+#                 data["blog_kind"] = "explainer"
+
+#             elif blog_kind == "hybrid":
+#                 data["blog_kind"] = "explainer"
+
+#             valid_blog_kinds = {
+#                 "explainer",
+#                 "tutorial",
+#                 "news_roundup",
+#                 "comparison",
+#                 "system_design",
+#             }
+
+#             if data.get("blog_kind") not in valid_blog_kinds:
+#                 data["blog_kind"] = "explainer"
+
+#             plan = Plan.model_validate(data)
+
+#         except Exception:
+
+#             plan = plan_retry_parser.parse_with_prompt(
+#                 raw,
+#                 messages
+#             )
+
+#     print("\n===== PLAN CREATED =====")
+#     print(f"Title: {plan.blog_title}")
+#     print(f"Kind: {plan.blog_kind}")
+#     print(f"Tasks: {len(plan.tasks)}")
+#     print("========================\n")
+
+#     return {
+#         "plan": plan
+#     }
 
 
 # def orchestrator_node(state: State) -> dict:
@@ -1007,7 +1182,7 @@ def worker_node(payload: dict) -> dict:
             for e in evidence[:20]
         )
 
-    response = model.invoke(
+    response = safe_invoke(
         [
             SystemMessage(content=WORKER_SYSTEM),
             HumanMessage(
@@ -1060,7 +1235,7 @@ image_parser = PydanticOutputParser(
 
 image_retry_parser = RetryWithErrorOutputParser.from_llm(
     parser=image_parser,
-    llm=llm
+    llm=model
 )
 DECIDE_IMAGES_SYSTEM = """You are an expert technical editor.
 Decide if images/diagrams are needed for THIS blog.
@@ -1095,7 +1270,7 @@ Insert placeholders + propose image prompts.
 Return ONLY valid JSON.
 """
 
-    response = llm.invoke(prompt)
+    response = safe_invoke(prompt)
 
     text = response.content if hasattr(response, "content") else str(response)
 
@@ -1246,30 +1421,30 @@ g.add_edge("reducer", END)
 app = g.compile()
 app
 
-# -----------------------------
-# 10) Runner
-# -----------------------------
-def run(topic: str, as_of: Optional[str] = None):
-    if as_of is None:
-        as_of = date.today().isoformat()
+# # -----------------------------
+# # 10) Runner
+# # -----------------------------
+# def run(topic: str, as_of: Optional[str] = None):
+#     if as_of is None:
+#         as_of = date.today().isoformat()
 
-    out = app.invoke(
-        {
-            "topic": topic,
-            "mode": "",
-            "needs_research": False,
-            "queries": [],
-            "evidence": [],
-            "plan": None,
-            "as_of": as_of,
-            "recency_days": 7,
-            "sections": [],
-            "merged_md": "",
-            "md_with_placeholders": "",
-            "image_specs": [],
-            "result": "",
-        }
-    )
+#     out = app.invoke(
+#         {
+#             "topic": topic,
+#             "mode": "",
+#             "needs_research": False,
+#             "queries": [],
+#             "evidence": [],
+#             "plan": None,
+#             "as_of": as_of,
+#             "recency_days": 7,
+#             "sections": [],
+#             "merged_md": "",
+#             "md_with_placeholders": "",
+#             "image_specs": [],
+#             "result": "",
+#         }
+#     )
 
-    return out
+#     return out
 
