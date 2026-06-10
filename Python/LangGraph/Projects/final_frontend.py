@@ -15,7 +15,7 @@ import streamlit as st
 # -----------------------------
 # Import your compiled LangGraph app
 # -----------------------------
-from final_BWA_backend import app
+from LangGraph.Projects.final_BWA_backend import app
 
 
 # -----------------------------
@@ -51,31 +51,71 @@ def images_zip(images_dir: Path) -> Optional[bytes]:
     return buf.getvalue()
 
 
-def try_stream(graph_app, inputs: Dict[str, Any]) -> Iterator[Tuple[str, Any]]:
+def try_stream(graph_app, inputs):
     """
-    Stream graph progress if available; else invoke.
+    Stream graph progress if available.
     Yields ("updates"/"values"/"final", payload).
     """
     try:
+        final_state = None
+
         for step in graph_app.stream(inputs, stream_mode="updates"):
             yield ("updates", step)
-        out = graph_app.invoke(inputs)
-        yield ("final", out)
+
+            if isinstance(step, dict):
+                for _, value in step.items():
+                    if isinstance(value, dict):
+                        final_state = value
+
+        if final_state is not None:
+            yield ("final", final_state)
         return
+
     except Exception:
         pass
 
     try:
+        final_state = None
+
         for step in graph_app.stream(inputs, stream_mode="values"):
+            final_state = step
             yield ("values", step)
-        out = graph_app.invoke(inputs)
-        yield ("final", out)
+
+        if final_state is not None:
+            yield ("final", final_state)
         return
+
     except Exception:
         pass
 
     out = graph_app.invoke(inputs)
     yield ("final", out)
+
+# def try_stream(graph_app, inputs: Dict[str, Any]) -> Iterator[Tuple[str, Any]]:
+#     """
+#     Stream graph progress if available; else invoke.
+#     Yields ("updates"/"values"/"final", payload).
+#     """
+#     try:
+#         for step in graph_app.stream(inputs, stream_mode="updates"):
+#             yield ("updates", step)
+#         out = graph_app.invoke(inputs)
+#         yield ("final", out)
+#         return
+#     except Exception:
+#         pass
+
+#     try:
+#         for step in graph_app.stream(inputs, stream_mode="values"):
+#             yield ("values", step)
+#         out = graph_app.invoke(inputs)
+#         yield ("final", out)
+#         return
+#     except Exception:
+#         pass
+
+#     out = graph_app.invoke(inputs)
+#     yield ("final", out)
 
 
 def extract_latest_state(current_state: Dict[str, Any], step_payload: Any) -> Dict[str, Any]:
